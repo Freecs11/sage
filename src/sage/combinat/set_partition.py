@@ -52,6 +52,7 @@ from sage.combinat.permutation import Permutation
 from sage.arith.misc import factorial
 from sage.misc.prandom import random, randint, sample
 from sage.sets.disjoint_set import DisjointSet
+from sage.misc.cachefunc import cached_method
 
 lazy_import('sage.combinat.posets.hasse_diagram', 'HasseDiagram')
 lazy_import('sage.probability.probability_distribution', 'GeneralDiscreteDistribution')
@@ -3322,3 +3323,425 @@ def cyclic_permutations_of_set_partition_iterator(set_part):
         for right in cyclic_permutations_of_set_partition_iterator(set_part[1:]):
             for perm in CyclicPermutations(set_part[0]):
                 yield [perm] + right
+
+def compare_subsets(a, b):
+    """
+    Compare two subsets of integers `a` and `b` following the lexicographic order.
+    
+    INPUT:
+
+    - ``a`` -- a list of integers; the first subset
+    - ``b`` -- a list of integers; the second subset
+
+    OUTPUT:
+
+    Boolean -- returns True if `a` is less than or equal to `b` in the lexicographic order described.
+
+    EXAMPLES:
+
+    This function compares two sets based on a specialized total order relation. For example:
+    
+    The relation ≤ is a total order.
+    For example {1, 3} ≤ {1, 3, 4} and {1, 3} ≤ {1, 4}. But we also have {1, 3, 4} ≤ {1, 4}.
+        
+    
+    ::
+        sage: from sage.combinat.set_partition import compare_subsets
+        sage: compare_subsets([1, 3], [1, 3, 4])
+        True
+        sage: from sage.combinat.set_partition import compare_subsets
+        sage: compare_subsets([1, 3], [1, 4])
+        True
+    
+    - But `{1, 4}` is not less than `{1, 3, 4}`:
+
+    ::
+        sage: from sage.combinat.set_partition import compare_subsets
+        sage: compare_subsets([1, 4], [1, 3, 4])
+        False
+        
+    """
+    def included_in(a, b):
+        """
+        Check if all elements of `a` are in `b`.
+        """
+        return all(x in b for x in a)
+    
+    def min_set_exclusive(a, b):
+        """
+        Return the minimum element of `a` not in `b`.
+        """
+        a_res = [x for x in a if x not in b]
+        return min(a_res) if a_res else None
+    min_a_b = min_set_exclusive(a, b)
+    min_b_a = min_set_exclusive(b, a)
+    max_a = max(a) if a else None
+    max_b = max(b) if b else None
+    return (a == b 
+            or (included_in(a, b) and max_a is not None and min_b_a is not None and max_a < min_b_a)
+            or (included_in(b, a) and min_a_b is not None and max_b is not None and min_a_b < max_b)
+            or (min_a_b is not None and min_b_a is not None and min_a_b < min_b_a))
+
+
+def compare_set_partitions(a, b):
+    """
+    Compare two set partitions `a` and `b` using a lexicographic order.
+
+    INPUT:
+
+    - ``a`` -- a SetPartition object; the first set partition
+    - ``b`` -- a SetPartition object; the second set partition
+
+    OUTPUT:
+
+    Boolean -- returns True if `a` is less than or equal to `b` in the lexicographic order.
+
+    EXAMPLES:
+
+    Compare a sequence of set partitions to ensure each partition is less than or equal to the next:
+
+    ::
+
+        sage: from sage.combinat.set_partition import SetPartitions, compare_set_partitions
+        sage: a = SetPartition([[1], [2, 3, 4], [5]])
+        sage: b = SetPartition([[1], [2], [3, 4, 5]])
+        sage: compare_set_partitions(a, b)
+        False
+
+    ::
+    
+        sage: from sage.combinat.set_partition import SetPartition, compare_set_partitions
+        sage: c = SetPartition([[1], [2, 3, 5] , [4]])
+        sage: d = SetPartition([[1, 2], [3] , [4, 5]])
+        sage: compare_set_partitions(c, d)
+        True
+        
+    :
+        sage: from sage.combinat.set_partition import SetPartition, compare_set_partitions
+        sage: e = SetPartition([[1], [2, 3, 4] , [5]])
+        sage: f = SetPartition([[1], [2, 3, 5] , [4] , [54]])
+        sage: compare_set_partitions(e, f)
+        True
+
+    TESTS:
+
+    We create a list of set partitions of the set {1, 2, 3, 4, 5} into 3 parts, sort them, and check that each partition is lexicographically less than or equal to the next. This confirms that `compare_set_partitions` correctly identifies the lexicographic ordering among a sorted list of set partitions:
+
+    ::
+    
+        sage: from sage.combinat.set_partition import SetPartitions, compare_set_partitions
+        sage: partitions = SetPartitions(5, 3).list()
+        sage: partitions.sort(key=lambda x: x.standard_form())
+        sage: all(compare_set_partitions(partitions[i], partitions[i + 1]) for i in range(len(partitions) - 1))
+        True
+
+    """
+    A_sequential_form = a.standard_form()
+    B_sequential_form = b.standard_form()
+    index_in_A = 0
+    index_in_B = 0
+    while index_in_A < len(A_sequential_form) and index_in_B < len(B_sequential_form):
+        if A_sequential_form[index_in_A] < B_sequential_form[index_in_B]:
+            return True
+        elif A_sequential_form[index_in_A] > B_sequential_form[index_in_B]:
+            return False
+        index_in_A += 1
+        index_in_B += 1
+    return index_in_A == len(A_sequential_form) and index_in_B == len(B_sequential_form)
+
+def sequential_form(a: SetPartition) -> list[list[int]]:
+    """
+    Return the sequential form of a set partition.
+
+    This function calls the `standard_form` method, to stay coherent with the conventions in Mansour's paper.
+
+    EXAMPLES:
+
+    ::
+
+        sage: from sage.combinat.set_partition import SetPartition, sequential_form
+        sage: a = SetPartition([[1, 2], [3]])
+        sage: sequential_form(a)
+        [[1, 2], [3]]
+    """
+    return a.standard_form()
+
+
+def canonical_form(set_partition: SetPartition) -> str:
+    """
+    Return the canonical form of a set partition as a string.
+
+    This function represents a partition in k blocks as a word over a k-letters alphabet,
+    where each letter's index corresponds to the block containing the integer i.
+
+    INPUT:
+
+    - ``set_partition`` -- a SetPartition object; the set partition to convert
+
+    OUTPUT:
+
+    String -- the canonical form of the set partition.
+
+    EXAMPLES:
+
+    The partition `145/2/3` is represented by the word `12311`.
+
+    ::
+        
+        sage: from sage.combinat.set_partition import SetPartition, canonical_form
+        sage: set_partition = SetPartition([[1, 4, 5], [2], [3]])
+        sage: canonical_form(set_partition)
+        '12311'
+
+
+    TESTS:
+
+    We test the function on all set partitions of the set {1, 2, 3, 4, 5} into 3 parts.
+    These tests confirm that `canonical_form` correctly computes the canonical form string
+    for each partition and matches a predefined list of valid canonical forms.
+
+    ::
+    
+        sage: partitions = SetPartitions(5, 3).list()
+        sage: CANONICAL_FORMS_VALIDATIONS = [
+        ....:     "12333", "12133", "12233", "12123", "12223", "12132", "12232", "12113",
+        ....:     "12323", "12131", "12322", "12313", "12332", "12213", "11233", "12312",
+        ....:     "11223", "12311", "11232", "12331", "11123", "12231", "11213", "12321", "11231"
+        ....: ] # Canonical forms of the partitions of 5 into 3 parts manually computed
+        sage: canonical_forms = [canonical_form(partition) for partition in partitions]
+        sage: all(item in CANONICAL_FORMS_VALIDATIONS for item in canonical_forms) and \
+        ....: all(item in canonical_forms for item in CANONICAL_FORMS_VALIDATIONS)
+        True
+    """
+    sequential_form = set_partition.standard_form()
+    index_map = {}
+    list_of_elements = []
+
+    for index_block, block in enumerate(sequential_form):
+        for element in block:
+            index_map[element] = index_block + 1
+            if not list_of_elements or element > list_of_elements[-1]:
+                list_of_elements.append(element)
+            else:
+                for i, val in enumerate(list_of_elements):
+                    if element < val:
+                        list_of_elements.insert(i, element)
+                        break
+
+    canonical_form = "".join(str(index_map[element]) for element in list_of_elements)
+
+    return canonical_form
+
+def canonical_to_sequential_form(canonical_form: str) -> list[list[int]]:
+    """
+    Convert the canonical form of a set partition back to its sequential form.
+
+    The canonical form of a set partition is a string where each character represents the block index of the integer at that position in the set. This function reconstructs the sequential form of the partition from this canonical representation.
+
+    INPUT:
+
+    - ``canonical_form`` -- string; the canonical form of the set partition
+
+    OUTPUT:
+
+    List of lists of integers -- the sequential form of the set partition.
+
+    EXAMPLES:
+
+    Convert the canonical form '12311' back to its sequential form:
+
+    ::
+    
+        sage: from sage.combinat.set_partition import canonical_to_sequential_form
+        sage: canonical_to_sequential_form('12311')
+        [[1, 4, 5], [2], [3]]
+
+    TESTS:
+
+    Confirm that the function correctly converts all canonical forms of the partitions of the set {1, 2, 3, 4, 5} into 3 parts back to their respective sequential forms and matches the original list:
+
+    ::
+        
+        sage: from sage.combinat.set_partition import SetPartitions, sequential_form, canonical_form, canonical_to_sequential_form
+        sage: partitions = SetPartitions(5, 3).list()
+        sage: sequential_forms = [sequential_form(partition) for partition in partitions]  # Sequential forms of the partitions of 5 into 3 parts
+        sage: canonical_forms = [canonical_form(partition) for partition in partitions]  # Canonical forms of the partitions of 5 into 3 parts
+        sage: sequential_forms_from_canonical_forms = [canonical_to_sequential_form(cf) for cf in canonical_forms]  # Sequential forms from canonical forms
+        sage: assert all(sorted(x) == sorted(z) for x, z in zip(sequential_forms, sequential_forms_from_canonical_forms))
+    """        
+    from collections import defaultdict
+    index_map = defaultdict(list) # map each block index to its elements
+    
+    for integer_value, block_index in enumerate(canonical_form):
+        index_map[block_index].append(integer_value + 1)
+    
+    return list(index_map.values())
+
+def sequential_to_canonical_form(sequential_form: list[list[int]]) -> str:
+    """
+    Convert the sequential form of a set partition to its canonical form.
+
+    The canonical form of a set partition is a string where each character represents
+    the block index of the integer at that position in the set. This function constructs
+    the canonical form from the sequential representation of the partition.
+
+    INPUT:
+
+    - ``sequential_form`` -- list of lists of integers; the sequential form of the set partition
+
+    OUTPUT:
+
+    String -- the canonical form of the set partition.
+
+    EXAMPLES:
+
+    Convert the sequential form `[[1, 4, 5], [2], [3]]` to its canonical form '12311':
+
+    ::
+    
+        sage: from sage.combinat.set_partition import sequential_to_canonical_form
+        sage: sequential_form = [[1, 4, 5], [2], [3]]
+        sage: sequential_to_canonical_form(sequential_form)
+        '12311'
+
+    TESTS:
+
+    Verify that the function correctly converts all sequential forms of the partitions
+    of the set {1, 2, 3, 4, 5} into 3 parts to their respective canonical forms,
+    and matches the predefined list of valid canonical forms:
+
+    ::
+    
+        sage: from sage.combinat.set_partition import SetPartitions, sequential_form, sequential_to_canonical_form
+        sage: partitions = SetPartitions(5, 3).list()
+        sage: CANONICAL_FORMS_VALIDATIONS = [
+        ....:     "12333", "12133", "12233", "12123", "12223", "12132", "12232", "12113",
+        ....:     "12323", "12131", "12322", "12313", "12332", "12213", "11233", "12312",
+        ....:     "11223", "12311", "11232", "12331", "11123", "12231", "11213", "12321", "11231"
+        ....: ]  # Canonical forms of the partitions of 5 into 3 parts manually computed
+        sage: sequential_forms = [sequential_form(partition) for partition in partitions]
+        sage: canonical_forms = [sequential_to_canonical_form(sf) for sf in sequential_forms]
+        sage: all(item in CANONICAL_FORMS_VALIDATIONS for item in canonical_forms) and \
+        ....: all(item in canonical_forms for item in CANONICAL_FORMS_VALIDATIONS)
+        True
+    """
+    index_map = {}  # map each element to its block index
+    list_of_elements = []  # list of the integers in the list of blocks
+
+    for index_block, block in enumerate(sequential_form):
+        list_of_elements += block
+        for element in block:
+            index_map[element] = index_block + 1
+
+    list_of_elements.sort()  # sort the list of elements in increasing order
+    canonical_form = ""  # the canonical form of the set partition
+
+    for element in list_of_elements:
+        canonical_form += str(index_map[element])
+
+    return canonical_form
+
+
+def unranking(n: int, k: int, r: int) -> list[list[int]]:
+    """
+    Given n, k, r, returns the r-th partition of the partition of n sets into k-part partitions,
+    following the lexicographic order ranking of the set partitions based on their sequential form.
+ 
+    INPUT:
+ 
+    - ``n`` -- an integer; the size of the set
+    - ``k`` -- an integer; the number of parts in a partition
+    - ``r`` -- an integer; the rank of the partition in the lexicographic order
+ 
+    OUTPUT:
+ 
+    SetPartition -- returns the r-th partition of the partition of n sets into k-part partitions.
+ 
+    EXAMPLES:
+ 
+    - `unranking(5,3,16)` returns the 16-th partition of the partition of 5 sets into 3-part partitions:
+    - `[[1, 3, 4], [2], [5]]`
+ 
+    ::
+
+        sage: from sage.combinat.set_partition import unranking
+        sage: unranking(5,3,16)
+        [[1, 3, 4], [2], [5]]
+    """
+    from collections import defaultdict
+ 
+    @cached_method
+    def stilde(n: int, k: int, d: int) -> int:
+        from math import comb
+ 
+        u = 0
+        end = min(n - k, d)
+        result = 0
+        sign = 1
+        while u <= end:
+            result += sign * stirling2(n + 1 - u, k + 1) * comb(d, u)
+            sign = -sign
+            u += 1
+        return result
+ 
+    @cached_method
+    def R_equation(l: int, d0: int, d1: int, n: int, k: int):
+        return stilde(n - l, k - 1, d0 - l) - stilde(n - l, k - 1, d1 + 1 - l)
+ 
+    @cached_method
+    def next_block(n: int, k: int, r: int) -> tuple[list[int], int]:
+        block = [0]
+        acc = stirling2(n - 1, k - 1)
+        if r < acc:
+            return block, 0
+        d0 = 1
+        index = 2
+        inf = 2
+        sup = n
+        complete = False
+        while not complete:
+            while inf < sup:
+                mid = (inf + sup) // 2
+                if r >= acc + R_equation(index - 1, d0, mid - 1, n, k):
+                    inf = mid + 1
+                else:
+                    sup = mid
+            mid = inf
+            threshold = stirling2(n - index, k - 1)
+            acc += R_equation(index - 1, d0, mid - 2, n, k)
+            block.append(mid - index)
+            if r < threshold + acc:
+                complete = True
+            else:
+                index += 1
+                d0 = mid
+                inf = d0 + 1
+                sup = n
+                acc += threshold
+        return block, acc
+ 
+    def extract(n: int, R: list):
+        L = list(range(1, n + 1))
+        P = []
+        for r in R:
+            p = []
+            for i in r:
+                p.append(L[i])
+                L.pop(i)
+            P.append(p)
+        return P
+ 
+    n_clone = n
+    Res = []
+    while k > 1:
+        (B, acc) = next_block(n, k, r)
+        Res.append(B)
+        r -= acc
+        n -= len(B)
+        k -= 1
+    res = []
+    for i in range(n):
+        res.append(0)
+    Res.append(res)
+    Res = extract(n_clone, Res)
+    return Res
